@@ -6,16 +6,29 @@ authors = [
     {name = "mcgillij",email = "mcgillivray.jason@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<4.0"
 dependencies = [
     "nbdev (>=2.3.35,<3.0.0)",
     "jupyter (>=1.1.1,<2.0.0)",
     "jupyterlab (>=4.3.6,<5.0.0)",
     "primp (>=0.14.0,<0.15.0)",
-    "chromadb (>=0.6.3,<0.7.0)"
+    "chromadb (>=0.6.3,<0.7.0)",
+    "openai (>=1.66.3,<2.0.0)",
 ]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "pytorch_rocm"
+url = "https://download.pytorch.org/whl/rocm6.2.4"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name = "pytorch_rocm_nightly"
+url = "https://download.pytorch.org/whl/nightly/rocm6.3"
+priority = "explicit"
+
+[tool.poetry.dependencies]
