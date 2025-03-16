@@ -7,14 +7,14 @@ import chromadb
 
 from transformers import AutoTokenizer
 
-embedding_directory = "./content/chroma_db"
-chroma_client = chromadb.PersistentClient(path=embedding_directory)
-my_collection = "my_collection"
+EMBEDDING_DIR = "./content/chroma_db"
+chroma_client = chromadb.PersistentClient(path=EMBEDDING_DIR)
+MY_COLLECTION = "my_collection"
 
-model_to_use = "qwen2.5-14b-instruct"
+MODEL_NAME = "qwen2.5-14b-instruct"
 MAX_TOKEN_LIMIT = 8000
 MAX_VDB_RESULTS = 2
-llm_hostname = "http://192.168.2.35:1234/v1"
+LLM_HOST = "http://192.168.2.35:1234/v1"
 
 
 def build_prompt(query: str, context: List[str]) -> List[ChatCompletionMessageParam]:
@@ -46,7 +46,7 @@ def get_llm_response(query: str, context: List[str], model_name: str) -> str:
     Returns:
     A response to the question.
     """
-    client = OpenAI(base_url=llm_hostname, api_key="dummy")
+    client = OpenAI(base_url=LLM_HOST, api_key="dummy")
     response = client.chat.completions.create(
         model=model_name,
         messages=build_prompt(query, context),
@@ -56,8 +56,7 @@ def get_llm_response(query: str, context: List[str], model_name: str) -> str:
 
 
 def main(chroma_collection) -> None:
-    model_name = model_to_use
-
+    """main function to run the chatbot"""
     while True:
         query = input("Query: ")
         if len(query) == 0:
@@ -134,9 +133,9 @@ def main(chroma_collection) -> None:
 
             context = trimmed_context
 
-        print(f"\nThinking using {model_name}...\n")
+        print(f"\nThinking using {MODEL_NAME}...\n")
 
-        response = get_llm_response(query, context, model_name)  # type: ignore
+        response = get_llm_response(query, context, MODEL_NAME)  # type: ignore
 
         pprint(response)
         print("\n")
@@ -144,20 +143,20 @@ def main(chroma_collection) -> None:
         print("\n")
 
 
-def get_tokenizer():
+def get_tokenizer() -> AutoTokenizer:
     global tokenizer
     if not tokenizer:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")  # Use a generic tokenizer
     return tokenizer
 
 
-def estimate_tokens(text):
+def estimate_tokens(text) -> int:
     tokenizer = get_tokenizer()
     tokens = tokenizer.tokenize(text)
     return len(tokens)
 
 
-def trim_text(text, max_length):
+def trim_text(text, max_length) -> str:
     while True:
         token_count = estimate_tokens(text)
         if token_count <= max_length:
@@ -170,5 +169,5 @@ def trim_text(text, max_length):
 if __name__ == "__main__":
     tokenizer = None
     get_tokenizer()
-    chroma_collection = chroma_client.get_or_create_collection(name=my_collection)
+    chroma_collection = chroma_client.get_or_create_collection(name=MY_COLLECTION)
     main(chroma_collection)

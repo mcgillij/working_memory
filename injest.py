@@ -5,20 +5,18 @@ import primp
 import sqlite3
 from datetime import datetime
 import chromadb
+from typing import List, Dict
 
-bookmarks_file = "bookmarks-2025-03-15.json"
+BOOKMARKS_FILE = "bookmarks-2025-03-15.json"
 
-embedding_directory = "./content/chroma_db"
-chroma_client = chromadb.PersistentClient(path=embedding_directory)
-my_collection = "my_collection"
+EMBEDDING_DIR = "./content/chroma_db"
+chroma_client = chromadb.PersistentClient(path=EMBEDDING_DIR)
+MY_COLLECTION = "my_collection"
 
 BookmarkEntry = namedtuple("BookmarkEntry", ["uri", "title", "last_modified"])
 
 
-def seed_chroma(content):
-    # Debugging step to ensure 'content' is not empty
-    print(f"Content length: {len(content)}")
-
+def seed_chroma(content) -> chromadb.Collection:
     if len(content) == 0:
         raise ValueError("Content list passed to seed_chroma must be non-empty")
 
@@ -31,10 +29,7 @@ def seed_chroma(content):
 
     id_array = [f"id{i+1}" for i in range(len(content_list))]
 
-    chroma_collection = chroma_client.get_or_create_collection(name=my_collection)
-
-    # Debugging step to ensure lists are not empty
-    print(f"Documents: {content_list}, Metadatas: {content_metadata}, IDs: {id_array}")
+    chroma_collection = chroma_client.get_or_create_collection(name=MY_COLLECTION)
 
     if not content_list or not content_metadata or not id_array:
         raise ValueError("Empty list found for documents, metadatas, or ids")
@@ -45,21 +40,18 @@ def seed_chroma(content):
     return chroma_collection
 
 
-def parse_bookmarks(file_to_parse):
-    # Define the BookmarkEntry named tuple
-    # Initialize the list to store the bookmarks
+def parse_bookmarks(file_to_parse) -> List:
     bookmarks = []
 
     with open(file_to_parse, "r", encoding="utf-8") as f:
         file_data = json.load(f)
 
-    # Start extracting bookmarks from the root of the bookmarks data
     extract_bookmarks(file_data, bookmarks)
     return bookmarks
 
 
-def process_bookmarks():
-    bookmarks = parse_bookmarks(bookmarks_file)
+def process_bookmarks() -> List:
+    bookmarks = parse_bookmarks(BOOKMARKS_FILE)
     print(f"Number of bookmarks extracted: {len(bookmarks)}")
     content = []
 
@@ -107,13 +99,13 @@ def process_bookmarks():
     return content
 
 
-def convert_timestamp_to_datetime(timestamp_us):
+def convert_timestamp_to_datetime(timestamp_us: int) -> datetime:
     """Convert a timestamp in microseconds to a datetime object."""
     return datetime.fromtimestamp(timestamp_us / 1_000_000.0)
 
 
 # Function to extract and store all links from the bookmarks data
-def extract_bookmarks(bookmark_node, bookmarks_list):
+def extract_bookmarks(bookmark_node: Dict, bookmarks_list: List) -> None:
     if isinstance(bookmark_node, dict):
         if bookmark_node.get("type") == "text/x-moz-place":
             # This is a bookmark entry with a URL
@@ -132,15 +124,13 @@ def extract_bookmarks(bookmark_node, bookmarks_list):
 
 
 # Function to convert datetime objects to a string format for SQLite
-def adapt_datetime(dt):
+def adapt_datetime(dt: datetime) -> str:
     return dt.isoformat()
 
 
-# Register the adapter with sqlite3
-sqlite3.register_adapter(datetime, adapt_datetime)
-
-
-def insert_or_update_bookmark(cursor, bookmark, content=None, checked=False):
+def insert_or_update_bookmark(
+    cursor: sqlite3.Cursor, bookmark: BookmarkEntry, content=None, checked: bool = False
+):
     if not bookmark.uri or not bookmark.title or not bookmark.last_modified:
         print(bookmark)
         raise ValueError("Bookmark URI, title, and last_modified must be provided.")
@@ -175,38 +165,14 @@ def insert_or_update_bookmark(cursor, bookmark, content=None, checked=False):
 
 
 # Function to fetch text content from a URI using primp
-def fetch_text_content(uri):
+def fetch_text_content(uri: str) -> str:
     if uri and uri.startswith("http"):
         client = primp.Client(impersonate="firefox_135", impersonate_os="linux")
         resp = client.get(uri)
         return resp.text_plain
 
 
-# Function to update the database with fetched text content and set checked to True
-def update_bookmarks_with_text_content():
-    # Query for bookmarks where checked is False
-    cursor.execute("SELECT uri, title, last_modified FROM bookmarks WHERE checked = 0")
-    rows = cursor.fetchall()
-
-    for row in rows:
-        uri, title, last_modified = row
-        bookmark = BookmarkEntry(uri=uri, title=title, last_modified=last_modified)
-
-        try:
-            # Fetch text content
-            text_content = fetch_text_content(uri)
-
-            # Update the database with the fetched text content and set checked to True
-            insert_or_update_bookmark(
-                cursor, bookmark, content=text_content, checked=True
-            )
-            print(f"Updated bookmark for URI: {uri}")
-
-        except Exception as e:
-            print(f"Failed to fetch or update bookmark for URI: {uri}. Error: {e}")
-
-
-def update_content(cursor):
+def update_content(cursor: sqlite3.Cursor) -> List:
     # Fetch text content for all bookmarks and update them in the database.
     cursor.execute("SELECT uri, title, last_modified FROM bookmarks WHERE checked = 0")
 
@@ -234,23 +200,22 @@ def update_content(cursor):
     return updated_bookmarks
 
 
-def fetch_updated_records(cursor):
+def fetch_updated_records(cursor: sqlite3.Cursor) -> List:
     # Fetch text content for all bookmarks and update them in the database.
-    cursor.execute(
-        "SELECT uri, title, last_modified, content FROM bookmarks WHERE checked = 1"
-    )
+    cursor.execute("SELECT uri, title, content FROM bookmarks WHERE checked = 1")
 
     content = []
     rows = cursor.fetchall()
 
     for row in rows:
-        uri, title, last_modified, c = row
+        uri, title, c = row
         content.append((title, uri, c))
 
     return content
 
 
 if __name__ == "__main__":
+    # Register the adapter with sqlite3
+    sqlite3.register_adapter(datetime, adapt_datetime)
     content = process_bookmarks()
-    print(f"Content length: {len(content)}")
     chroma_collection = seed_chroma(content)
