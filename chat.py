@@ -11,11 +11,19 @@ import sqlite3
 from datetime import datetime
 import chromadb
 
+from transformers import AutoTokenizer
+
 embedding_directory = "./content/chroma_db"
 chroma_client = chromadb.PersistentClient(path=embedding_directory)
 my_collection = "my_collection"
 
+model_to_use = "qwen2.5-14b-instruct"
+MAX_TOKEN_LIMIT = 8000
+MAX_VDB_RESULTS = 2
+llm_hostname = "http://192.168.2.35:1234/v1"
+
 BookmarkEntry = namedtuple('BookmarkEntry', ['uri', 'title', 'last_modified'])
+
 
 def convert_timestamp_to_datetime(timestamp_us):
     """Convert a timestamp in microseconds to a datetime object."""
@@ -137,9 +145,9 @@ def build_prompt(query: str, context: List[str]) -> List[ChatCompletionMessagePa
     return [system, user]
 
 
-def get_chatGPT_response(query: str, context: List[str], model_name: str) -> str:
+def get_llm_response(query: str, context: List[str], model_name: str) -> str:
     """
-    Queries the GPT API to get a response to the question.
+    Queries the LLM API to get a response to the question.
 
     Args:
     query (str): The original query.
@@ -148,7 +156,7 @@ def get_chatGPT_response(query: str, context: List[str], model_name: str) -> str
     Returns:
     A response to the question.
     """
-    client = OpenAI(base_url='http://192.168.2.35:1234/v1', api_key='dummy')
+    client = OpenAI(base_url=llm_hostname, api_key='dummy')
     response = client.chat.completions.create(
         model=model_name,
         messages=build_prompt(query, context),
@@ -158,39 +166,133 @@ def get_chatGPT_response(query: str, context: List[str], model_name: str) -> str
 
 
 def main(chroma_collection) -> None:
-    model_name = "qwen2.5-coder-32b-instruct"
+    model_name = model_to_use
+
     while True:
         query = input("Query: ")
         if len(query) == 0:
             print("Please enter a question. Ctrl+C to Quit.\n")
             continue
-        print(f"\nThinking using {model_name}...\n")
 
-        # Query the collection to get the 5 most relevant results
+        # Query the collection for relevant results
         results = chroma_collection.query(
-            query_texts=[query], n_results=2, include=["documents", "metadatas"]
+            query_texts=[query], n_results=MAX_VDB_RESULTS, include=["documents", "metadatas"]
         )
 
         try:
+            documents = [doc.strip() for doc in results["documents"][0]]
+
+            if len(documents) > 1:
+                # If multiple documents are returned, trim them to fit within the context limit
+                trimmed_documents = []
+                total_token_count = estimate_tokens(query)
+
+                for document in documents:
+                    document_tokens = estimate_tokens(document)
+                    if total_token_count + document_tokens <= MAX_TOKEN_LIMIT - len(query):
+                        trimmed_documents.append(document)
+                        total_token_count += document_tokens
+                    else:
+                        break
+
+                documents = trimmed_documents
+
+            print(f"Found {len(documents)} documents.")
+
             # Access metadatas and documents separately
+            metadatas = results["metadatas"][0]
             sources = "\n".join(
                 [
                     f"uri: {metadata['source']}: title: {metadata['title']}"
-                    for metadata in results["metadatas"][0]  # type: ignore
+                    for metadata in metadatas  # type: ignore
                 ]
             )
         except (KeyError, TypeError) as e:
             print(f"An error occurred while processing the results: {e}")
             print("Please check the structure of the 'results' dictionary.")
 
-        # Get the response from GPT
-        response = get_chatGPT_response(query, results["documents"][0], model_name)  # type: ignore
+        context = documents
 
-        # Output, with sources
+        if not context:
+            print("No relevant documents found.")
+            continue
+
+        # Check token count before sending to LLM
+        query_plus_documents = query + " ".join(context)
+
+        if estimate_tokens(query_plus_documents) > MAX_TOKEN_LIMIT:
+            print(f"The combined prompt exceeds the model's maximum capacity of {MAX_TOKEN_LIMIT} tokens. Trimming documents further.")
+
+            trimmed_context = []
+            total_token_count = estimate_tokens(query)
+
+            for document in context:
+                token_count = estimate_tokens(document)
+                if total_token_count + token_count <= MAX_TOKEN_LIMIT - len(query):
+                    trimmed_context.append(trim_text(document, MAX_TOKEN_LIMIT - total_token_count))
+                    total_token_count += token_count
+                else:
+                    break
+
+            context = trimmed_context
+
+        print(f"\nThinking using {model_name}...\n")
+
+        response = get_llm_response(query, context, model_name)  # type: ignore
+
         pprint(response)
         print("\n")
         pprint(f"Source documents:\n{sources}")
         print("\n")
+
+
+# def main(chroma_collection) -> None:
+    # model_name = model_to_use
+    # while True:
+        # query = input("Query: ")
+        # if len(query) == 0:
+            # print("Please enter a question. Ctrl+C to Quit.\n")
+            # continue
+
+        # # Query the collection to get the 5 most relevant results
+        # results = chroma_collection.query(
+            # query_texts=[query], n_results=MAX_VDB_RESULTS, include=["documents", "metadatas"]
+        # )
+
+        # try:
+            # documents = [doc.strip() for doc in results["documents"][0]]
+            # print(f"Found {len(documents)} documents.")
+            # # check if the documents are too long
+            # query_plus_documents = query + " ".join(documents)
+            # encoding = tokenizer.encode(query_plus_documents, truncation=True, max_length=MAX_TOKEN_LIMIT)
+            # if len(encoding) > MAX_TOKEN_LIMIT:
+                # print("The combined query and documents are too long. Trimming the documents.")
+                # documents = [tokenizer.decode(tokenizer.encode(doc, truncation=True, max_length=MAX_TOKEN_LIMIT//MAX_VDB_RESULTS - estimate_tokens(query)))[:MAX_TOKEN_LIMIT//2] for doc in documents]
+            # # if estimate_tokens(query_plus_documents) > MAX_TOKEN_LIMIT:
+
+                # # print("The combined query and documents are too long. Trimming the documents.")
+                # # documents = [trim_text(doc, MAX_TOKEN_LIMIT//MAX_VDB_RESULTS - estimate_tokens(query)) for doc in documents]
+
+            # # Access metadatas and documents separately
+            # metadatas = results["metadatas"][0]
+            # sources = "\n".join(
+                # [
+                    # f"uri: {metadata['source']}: title: {metadata['title']}"
+                    # for metadata in metadatas  # type: ignore
+                # ]
+            # )
+        # except (KeyError, TypeError) as e:
+            # print(f"An error occurred while processing the results: {e}")
+            # print("Please check the structure of the 'results' dictionary.")
+
+        # print(f"\nThinking using {model_name}...\n")
+        # response = get_llm_response(query, documents, model_name)  # type: ignore
+
+        # # Output, with sources
+        # pprint(response)
+        # print("\n")
+        # pprint(f"Source documents:\n{sources}")
+        # print("\n")
 
 def seed_chroma(content):
     content_list = []
@@ -248,8 +350,30 @@ def process_bookmarks():
             conn.close()
     return content
 
+def get_tokenizer():
+    global tokenizer
+    if not tokenizer:
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")  # Use a generic tokenizer
+    return tokenizer
+
+def estimate_tokens(text):
+    tokenizer = get_tokenizer()
+    tokens = tokenizer.tokenize(text)
+    return len(tokens)
+
+def trim_text(text, max_length):
+    while True:
+        token_count = estimate_tokens(text)
+        if token_count <= max_length:
+            break
+        words = text.split()
+        text = ' '.join(words[:-1])
+    return text
+
 
 if __name__ == "__main__":
+    tokenizer = None
+    get_tokenizer()
     seed_chromadb = False
 
     if seed_chromadb:
